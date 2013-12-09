@@ -15,20 +15,18 @@ type Client struct {
 	quit chan bool
 }
 
-func NewClient() (* Client) {
-	return &Client{ command : make(chan string), quit : make(chan bool) }
+type Runner struct {
+	addClient chan *Client
+	removeClient chan *Client
 }
 
 func main() {
-	addClient, removeClient := runCommand("tail", "-f", "/tmp/hoge")
+	runner := runCommand("tail", "-f", "/tmp/hoge")
 
 	http.HandleFunc( "/stream", func(res http.ResponseWriter, req *http.Request) {
 		log.Println("New client arrived")
 
-		client := NewClient()
-		addClient <- client
-		handleStream( res, req, client )	
-		removeClient <- client 
+		handleStream( res, req, runner )	
 
 		log.Println("Client has been disconnected")
 	})
@@ -45,7 +43,7 @@ func main() {
 	http.ListenAndServe(":8080", nil)
 }
 
-func runCommand(name string, args ...string) (addClient chan *Client, removeClient chan *Client) {
+func runCommand(name string, args ...string) (* Runner) {
 	cmd := exec.Command(name, args...)
 
 	out, err := cmd.StdoutPipe()
@@ -71,8 +69,8 @@ func runCommand(name string, args ...string) (addClient chan *Client, removeClie
 		}
 	}();
 
-	addClient    = make(chan *Client)
-	removeClient = make(chan *Client)
+	addClient    := make(chan *Client)
+	removeClient := make(chan *Client)
 	go func() {
 		clients := [](* Client){}
 		for {
@@ -81,11 +79,6 @@ func runCommand(name string, args ...string) (addClient chan *Client, removeClie
 				for _,client := range clients {
 					client.command <-line
 				}
-			case <-quit:
-				for _,client := range clients {
-					client.quit <-true
-				}
-				clients = [](* Client){}
 			case add := <-addClient:
 				clients = append(clients, add )
 				log.Printf("Current # of clients: %d", len(clients))
@@ -98,13 +91,21 @@ func runCommand(name string, args ...string) (addClient chan *Client, removeClie
 				}
 				clients = newClients
 				log.Printf("Current # of clients: %d", len(clients))
+			case <-quit:
+				for _,client := range clients {
+					client.quit <-true
+				}
+				clients = [](* Client){}
+				close(addClient)
+				close(removeClient)
+				return;
 			}
 		}
 	}();
-	return addClient, removeClient
+	return &Runner{addClient, removeClient}
 }
 
-func handleStream(res http.ResponseWriter, req *http.Request, client *Client ) {
+func handleStream(res http.ResponseWriter, req *http.Request, runner *Runner ) {
 	f, ok := res.(http.Flusher)
 	if !ok {
 		http.Error(res, "Streaming unsupported", http.StatusInternalServerError)
@@ -122,6 +123,9 @@ func handleStream(res http.ResponseWriter, req *http.Request, client *Client ) {
 	headers.Set("Content-Type", "text/event-stream; charset=utf-8")
 	headers.Set("Cache-Control", "no-cache")
 
+
+	client := &Client{ command : make(chan string), quit : make(chan bool) }
+	runner.addClient <-client
 	for {
 		select {
 		case line := <-client.command:
@@ -129,9 +133,10 @@ func handleStream(res http.ResponseWriter, req *http.Request, client *Client ) {
 			fmt.Fprint(res, "\n")
 			f.Flush()
 		case <-client.quit:
-			log.Println("client quit")
+			log.Println("command exit")
 			return
 		case <-closer:
+			runner.removeClient <-client
 			return
 		}
 	}
