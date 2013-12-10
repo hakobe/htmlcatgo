@@ -13,8 +13,10 @@ type Client struct {
 }
 
 type Broadcaster struct {
-	clients [](*Client)
-	sem     chan bool
+	clients      [](*Client)
+	addClient    chan (*Client)
+	removeClient chan (*Client)
+	sem          chan bool
 }
 
 func NewBroadcaster(stream *bufio.Reader) *Broadcaster {
@@ -37,7 +39,7 @@ func NewBroadcaster(stream *bufio.Reader) *Broadcaster {
 	sem := make(chan bool, 1)
 	sem <- true
 
-	broadcaster := &Broadcaster{[](*Client){}, sem}
+	broadcaster := &Broadcaster{[](*Client){}, make(chan (*Client)), make(chan (*Client)), sem}
 
 	go func() {
 		for {
@@ -52,6 +54,22 @@ func NewBroadcaster(stream *bufio.Reader) *Broadcaster {
 				}
 				broadcaster.Close()
 				return
+			case c := <-broadcaster.addClient:
+				broadcaster.clients = append(broadcaster.clients, c)
+				log.Printf("Current # of clients: %d", len(broadcaster.clients))
+
+				broadcaster.sem <- true
+			case c := <-broadcaster.removeClient:
+				newClients := make([](*Client), 0, len(broadcaster.clients))
+				for _, ch := range broadcaster.clients {
+					if ch != c {
+						newClients = append(newClients, ch)
+					}
+				}
+				broadcaster.clients = newClients
+				log.Printf("Current # of clients: %d", len(broadcaster.clients))
+
+				broadcaster.sem <- true
 			}
 		}
 	}()
@@ -65,10 +83,8 @@ func (broadcaster *Broadcaster) AddClient(client *Client) bool {
 		return false
 	}
 
-	broadcaster.clients = append(broadcaster.clients, client)
-	log.Printf("Current # of clients: %d", len(broadcaster.clients))
+	broadcaster.addClient <- client
 
-	broadcaster.sem <- true
 	return true
 }
 
@@ -78,16 +94,8 @@ func (broadcaster *Broadcaster) RemoveClient(client *Client) bool {
 		return false
 	}
 
-	newClients := make([](*Client), 0, len(broadcaster.clients))
-	for _, ch := range broadcaster.clients {
-		if ch != client {
-			newClients = append(newClients, ch)
-		}
-	}
-	broadcaster.clients = newClients
-	log.Printf("Current # of clients: %d", len(broadcaster.clients))
+	broadcaster.removeClient <- client
 
-	broadcaster.sem <- true
 	return true
 }
 
