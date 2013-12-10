@@ -8,64 +8,64 @@ import "fmt"
 import "html/template"
 
 type Client struct {
-	out chan string
+	out  chan string
 	quit chan bool
 }
 
 type Broadcaster struct {
-	clients [](* Client)
-	sem chan bool
+	clients [](*Client)
+	sem     chan bool
 }
 
-func NewBroadcaster(stream * bufio.Reader) (* Broadcaster) {
+func NewBroadcaster(stream *bufio.Reader) *Broadcaster {
 
-	out  := make(chan string)
+	out := make(chan string)
 	quit := make(chan bool)
 	go func() {
 		for {
 			line, err := stream.ReadString('\n')
 			log.Print(line)
-			if (err != nil) {
+			if err != nil {
 				log.Print(err)
 				quit <- true
 				return
 			}
 			out <- line
 		}
-	}();
+	}()
 
 	sem := make(chan bool, 1)
 	sem <- true
 
-	broadcaster := &Broadcaster{ [](* Client){}, sem }
+	broadcaster := &Broadcaster{[](*Client){}, sem}
 
 	go func() {
 		for {
 			select {
 			case line := <-out:
-				for _,client := range broadcaster.clients {
-					client.out <-line
+				for _, client := range broadcaster.clients {
+					client.out <- line
 				}
 			case <-quit:
-				for _,client := range broadcaster.clients {
-					client.quit <-true
+				for _, client := range broadcaster.clients {
+					client.quit <- true
 				}
 				broadcaster.Close()
-				return;
+				return
 			}
 		}
-	}();
+	}()
 
 	return broadcaster
 }
 
 func (broadcaster *Broadcaster) AddClient(client *Client) bool {
-	_,ok := <-broadcaster.sem
-	if (!ok) {
+	_, ok := <-broadcaster.sem
+	if !ok {
 		return false
 	}
 
-	broadcaster.clients = append(broadcaster.clients, client )
+	broadcaster.clients = append(broadcaster.clients, client)
 	log.Printf("Current # of clients: %d", len(broadcaster.clients))
 
 	broadcaster.sem <- true
@@ -73,14 +73,14 @@ func (broadcaster *Broadcaster) AddClient(client *Client) bool {
 }
 
 func (broadcaster *Broadcaster) RemoveClient(client *Client) bool {
-	_,ok := <-broadcaster.sem
-	if (!ok) {
+	_, ok := <-broadcaster.sem
+	if !ok {
 		return false
 	}
 
-	newClients := make([](* Client), 0, len(broadcaster.clients))
-	for _,ch := range broadcaster.clients {
-		if (ch != client) {
+	newClients := make([](*Client), 0, len(broadcaster.clients))
+	for _, ch := range broadcaster.clients {
+		if ch != client {
 			newClients = append(newClients, ch)
 		}
 	}
@@ -92,14 +92,14 @@ func (broadcaster *Broadcaster) RemoveClient(client *Client) bool {
 }
 
 func (broadcaster *Broadcaster) Close() {
-	_,ok := <-broadcaster.sem
-	if (!ok) {
+	_, ok := <-broadcaster.sem
+	if !ok {
 		return
 	}
 	close(broadcaster.sem)
 }
 
-func handleStream(res http.ResponseWriter, req *http.Request, broadcaster *Broadcaster ) {
+func handleStream(res http.ResponseWriter, req *http.Request, broadcaster *Broadcaster) {
 	f, ok := res.(http.Flusher)
 	if !ok {
 		http.Error(res, "Streaming unsupported", http.StatusInternalServerError)
@@ -117,8 +117,8 @@ func handleStream(res http.ResponseWriter, req *http.Request, broadcaster *Broad
 	headers.Set("Content-Type", "text/event-stream; charset=utf-8")
 	headers.Set("Cache-Control", "no-cache")
 
-	client := &Client{ out : make(chan string), quit : make(chan bool) }
-	if (!broadcaster.AddClient(client)) {
+	client := &Client{out: make(chan string), quit: make(chan bool)}
+	if !broadcaster.AddClient(client) {
 		return
 	}
 
@@ -140,22 +140,22 @@ func handleStream(res http.ResponseWriter, req *http.Request, broadcaster *Broad
 
 func main() {
 
-	broadcaster := NewBroadcaster( bufio.NewReader(os.Stdin) )
+	broadcaster := NewBroadcaster(bufio.NewReader(os.Stdin))
 
-	http.HandleFunc( "/stream", func(res http.ResponseWriter, req *http.Request) {
+	http.HandleFunc("/stream", func(res http.ResponseWriter, req *http.Request) {
 		log.Println("New client arrived")
 
-		handleStream( res, req, broadcaster )	
+		handleStream(res, req, broadcaster)
 
 		log.Println("Client has been disconnected")
 	})
 
-	http.Handle("/js/",  http.FileServer(http.Dir("./static/")))
+	http.Handle("/js/", http.FileServer(http.Dir("./static/")))
 	http.Handle("/css/", http.FileServer(http.Dir("./static/")))
 
-	http.HandleFunc( "/", func(res http.ResponseWriter, req *http.Request) {
-		var indexTemplate = template.Must( template.ParseFiles( "templates/index.html" ) )
-		indexTemplate.Execute( res, nil )
+	http.HandleFunc("/", func(res http.ResponseWriter, req *http.Request) {
+		var indexTemplate = template.Must(template.ParseFiles("templates/index.html"))
+		indexTemplate.Execute(res, nil)
 	})
 
 	log.Println("starting server at http://localhost:8080")
