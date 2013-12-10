@@ -2,116 +2,104 @@ package main
 
 import "net/http"
 import "log"
-
-import "os/exec"
-
+import "os"
 import "bufio"
-
 import "fmt"
 import "html/template"
 
 type Client struct {
-	command chan string
+	out chan string
 	quit chan bool
 }
 
-type Runner struct {
+type Broadcaster struct {
 	clients [](* Client)
 	sem chan bool
 }
 
-func RunCommand(name string, args ...string) (* Runner) {
-	cmd := exec.Command(name, args...)
+func NewBroadcaster(stream * bufio.Reader) (* Broadcaster) {
 
-	out, err := cmd.StdoutPipe()
-	if (err != nil) {
-		log.Fatal(err)
-	}
-	outBuf := bufio.NewReader(out)
-	cmd.Start() 
-
-	command := make(chan string)
-	quit    := make(chan bool)
+	out  := make(chan string)
+	quit := make(chan bool)
 	go func() {
 		for {
-			line, err := outBuf.ReadString('\n')
+			line, err := stream.ReadString('\n')
+			log.Print(line)
 			if (err != nil) {
 				log.Print(err)
-				log.Println("Command exited")
-				cmd.Wait()
 				quit <- true
 				return
 			}
-			command <- line
+			out <- line
 		}
 	}();
 
 	sem := make(chan bool, 1)
 	sem <- true
 
-	runner := &Runner{ [](* Client){}, sem }
+	broadcaster := &Broadcaster{ [](* Client){}, sem }
 
 	go func() {
 		for {
 			select {
-			case line := <-command:
-				for _,client := range runner.clients {
-					client.command <-line
+			case line := <-out:
+				for _,client := range broadcaster.clients {
+					client.out <-line
 				}
 			case <-quit:
-				for _,client := range runner.clients {
+				for _,client := range broadcaster.clients {
 					client.quit <-true
 				}
-				runner.Close()
+				broadcaster.Close()
 				return;
 			}
 		}
 	}();
 
-	return runner
+	return broadcaster
 }
 
-func (runner *Runner) AddClient(client *Client) bool {
-	_,ok := <-runner.sem
+func (broadcaster *Broadcaster) AddClient(client *Client) bool {
+	_,ok := <-broadcaster.sem
 	if (!ok) {
 		return false
 	}
 
-	runner.clients = append(runner.clients, client )
-	log.Printf("Current # of clients: %d", len(runner.clients))
+	broadcaster.clients = append(broadcaster.clients, client )
+	log.Printf("Current # of clients: %d", len(broadcaster.clients))
 
-	runner.sem <- true
+	broadcaster.sem <- true
 	return true
 }
 
-func (runner *Runner) RemoveClient(client *Client) bool {
-	_,ok := <-runner.sem
+func (broadcaster *Broadcaster) RemoveClient(client *Client) bool {
+	_,ok := <-broadcaster.sem
 	if (!ok) {
 		return false
 	}
 
-	newClients := make([](* Client), 0, len(runner.clients))
-	for _,ch := range runner.clients {
+	newClients := make([](* Client), 0, len(broadcaster.clients))
+	for _,ch := range broadcaster.clients {
 		if (ch != client) {
 			newClients = append(newClients, ch)
 		}
 	}
-	runner.clients = newClients
-	log.Printf("Current # of clients: %d", len(runner.clients))
+	broadcaster.clients = newClients
+	log.Printf("Current # of clients: %d", len(broadcaster.clients))
 
-	runner.sem <- true
+	broadcaster.sem <- true
 	return true
 }
 
-func (runner *Runner) Close() {
-	_,ok := <-runner.sem
+func (broadcaster *Broadcaster) Close() {
+	_,ok := <-broadcaster.sem
 	if (!ok) {
 		return
 	}
-	close(runner.sem)
+	close(broadcaster.sem)
 }
 
-func handleStream(res http.ResponseWriter, req *http.Request, runner *Runner ) {
+func handleStream(res http.ResponseWriter, req *http.Request, broadcaster *Broadcaster ) {
 	f, ok := res.(http.Flusher)
 	if !ok {
 		http.Error(res, "Streaming unsupported", http.StatusInternalServerError)
@@ -129,34 +117,35 @@ func handleStream(res http.ResponseWriter, req *http.Request, runner *Runner ) {
 	headers.Set("Content-Type", "text/event-stream; charset=utf-8")
 	headers.Set("Cache-Control", "no-cache")
 
-	client := &Client{ command : make(chan string), quit : make(chan bool) }
-	if (!runner.AddClient(client)) {
+	client := &Client{ out : make(chan string), quit : make(chan bool) }
+	if (!broadcaster.AddClient(client)) {
 		return
 	}
 
 	for {
 		select {
-		case line := <-client.command:
+		case line := <-client.out:
 			fmt.Fprintf(res, "data:%s\n", line)
 			fmt.Fprint(res, "\n")
 			f.Flush()
 		case <-client.quit:
-			log.Println("command exit")
+			log.Println("Stream end")
 			return
 		case <-closer:
-			runner.RemoveClient(client)
+			broadcaster.RemoveClient(client)
 			return
 		}
 	}
 }
 
 func main() {
-	runner := RunCommand("tail", "-f", "/tmp/hoge")
+
+	broadcaster := NewBroadcaster( bufio.NewReader(os.Stdin) )
 
 	http.HandleFunc( "/stream", func(res http.ResponseWriter, req *http.Request) {
 		log.Println("New client arrived")
 
-		handleStream( res, req, runner )	
+		handleStream( res, req, broadcaster )	
 
 		log.Println("Client has been disconnected")
 	})
