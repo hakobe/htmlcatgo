@@ -1,11 +1,16 @@
 package main
 
+import "net"
 import "net/http"
 import "log"
 import "os"
+import osexec "os/exec"
 import "bufio"
 import "fmt"
 import "html/template"
+import "flag"
+import "math/rand"
+import "strconv"
 
 type Client struct {
 	out  chan string
@@ -28,7 +33,6 @@ func NewBroadcaster(stream *bufio.Reader) *Broadcaster {
 	go func() {
 		for {
 			line, err := stream.ReadString('\n')
-			log.Print(line)
 			if err != nil {
 				log.Print(err)
 				quit <- true
@@ -55,8 +59,6 @@ func NewBroadcaster(stream *bufio.Reader) *Broadcaster {
 				return
 			case c := <-broadcaster.addClient:
 				clients = append(clients, c)
-				log.Printf("Current # of clients: %d", len(clients))
-
 				broadcaster.sem <- true
 			case c := <-broadcaster.removeClient:
 				newClients := make([](*Client), 0, len(clients))
@@ -66,8 +68,6 @@ func NewBroadcaster(stream *bufio.Reader) *Broadcaster {
 					}
 				}
 				clients = newClients
-				log.Printf("Current # of clients: %d", len(clients))
-
 				broadcaster.sem <- true
 			}
 		}
@@ -128,7 +128,6 @@ func handleStream(res http.ResponseWriter, req *http.Request, broadcaster *Broad
 			fmt.Fprint(res, "\n")
 			f.Flush()
 		case <-client.quit:
-			log.Println("Stream end")
 			return
 		case <-closer:
 			broadcaster.RemoveClient(client)
@@ -137,16 +136,35 @@ func handleStream(res http.ResponseWriter, req *http.Request, broadcaster *Broad
 	}
 }
 
+func emptyPort() int {
+	port, err := strconv.Atoi(os.Getenv("HTTPCAT_PORT"))
+	if ( err != nil ) {
+		port = rand.Intn(1000) + 45192
+	}
+
+	for ; port < 60000; port += 1 {
+		addr, err := net.ResolveTCPAddr( "tcp4", fmt.Sprintf("localhost:%d", port) )
+		listener, err := net.ListenTCP("tcp4", addr) 
+		listener.Close()
+		if ( err == nil ) {
+			return port
+		}
+	}
+
+	log.Fatal("Could not find empty port")
+	return 0
+}
+
 func main() {
+	port := flag.Int("port", emptyPort(), "port to bind (default 8080)")
+	host := flag.String("host", "localhost", "url host (default localhost)")
+	exec := flag.String("exec", "", "command to run passing htmlcatgot URL (default \"\")")
+	flag.Parse()
 
 	broadcaster := NewBroadcaster(bufio.NewReader(os.Stdin))
 
 	http.HandleFunc("/stream", func(res http.ResponseWriter, req *http.Request) {
-		log.Println("New client arrived")
-
 		handleStream(res, req, broadcaster)
-
-		log.Println("Client has been disconnected")
 	})
 
 	http.Handle("/js/", http.FileServer(http.Dir("./static/")))
@@ -157,6 +175,19 @@ func main() {
 		indexTemplate.Execute(res, nil)
 	})
 
-	log.Println("starting server at http://localhost:8080")
-	http.ListenAndServe(":8080", nil)
+	if (len(*exec) == 0) {
+		log.Printf("%s: http://%s:%d\n", os.Args[0], *host, *port)
+	} else {
+		go func() {
+			cmd := osexec.Command(*exec, fmt.Sprintf("http://%s:%d", *host, *port))
+			err := cmd.Run()
+			if (err != nil) {
+				log.Fatal(err)
+			}
+		}()
+	}
+	err := http.ListenAndServe(fmt.Sprintf(":%d", *port), nil)
+	if ( err != nil ) {
+		log.Fatal(err)
+	}
 }
