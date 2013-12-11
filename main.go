@@ -13,13 +13,15 @@ type Client struct {
 }
 
 type Broadcaster struct {
-	clients      [](*Client)
 	addClient    chan (*Client)
 	removeClient chan (*Client)
 	sem          chan bool
 }
 
 func NewBroadcaster(stream *bufio.Reader) *Broadcaster {
+	sem := make(chan bool, 1)
+	sem <- true
+	broadcaster := &Broadcaster{make(chan (*Client)), make(chan (*Client)), sem}
 
 	out := make(chan string)
 	quit := make(chan bool)
@@ -36,38 +38,35 @@ func NewBroadcaster(stream *bufio.Reader) *Broadcaster {
 		}
 	}()
 
-	sem := make(chan bool, 1)
-	sem <- true
-
-	broadcaster := &Broadcaster{[](*Client){}, make(chan (*Client)), make(chan (*Client)), sem}
-
 	go func() {
+		clients := [](* Client){}
 		for {
 			select {
 			case line := <-out:
-				for _, client := range broadcaster.clients {
+				for _, client := range clients {
 					client.out <- line
 				}
 			case <-quit:
-				for _, client := range broadcaster.clients {
+				<-broadcaster.sem
+				for _, client := range clients {
 					client.quit <- true
 				}
-				broadcaster.Close()
+				close(broadcaster.sem)
 				return
 			case c := <-broadcaster.addClient:
-				broadcaster.clients = append(broadcaster.clients, c)
-				log.Printf("Current # of clients: %d", len(broadcaster.clients))
+				clients = append(clients, c)
+				log.Printf("Current # of clients: %d", len(clients))
 
 				broadcaster.sem <- true
 			case c := <-broadcaster.removeClient:
-				newClients := make([](*Client), 0, len(broadcaster.clients))
-				for _, ch := range broadcaster.clients {
+				newClients := make([](*Client), 0, len(clients))
+				for _, ch := range clients {
 					if ch != c {
 						newClients = append(newClients, ch)
 					}
 				}
-				broadcaster.clients = newClients
-				log.Printf("Current # of clients: %d", len(broadcaster.clients))
+				clients = newClients
+				log.Printf("Current # of clients: %d", len(clients))
 
 				broadcaster.sem <- true
 			}
@@ -97,14 +96,6 @@ func (broadcaster *Broadcaster) RemoveClient(client *Client) bool {
 	broadcaster.removeClient <- client
 
 	return true
-}
-
-func (broadcaster *Broadcaster) Close() {
-	_, ok := <-broadcaster.sem
-	if !ok {
-		return
-	}
-	close(broadcaster.sem)
 }
 
 func handleStream(res http.ResponseWriter, req *http.Request, broadcaster *Broadcaster) {
