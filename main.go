@@ -1,5 +1,6 @@
 package main
 
+import "io"
 import "net"
 import "net/http"
 import "log"
@@ -167,12 +168,8 @@ func main() {
 		handleStream(res, req, broadcaster)
 	})
 
-	http.Handle("/js/", http.FileServer(http.Dir("./static/")))
-	http.Handle("/css/", http.FileServer(http.Dir("./static/")))
-
 	http.HandleFunc("/", func(res http.ResponseWriter, req *http.Request) {
-		var indexTemplate = template.Must(template.ParseFiles("templates/index.html"))
-		indexTemplate.Execute(res, nil)
+		executeIndexTemplate(res)
 	})
 
 	if (len(*exec) == 0) {
@@ -190,4 +187,40 @@ func main() {
 	if ( err != nil ) {
 		log.Fatal(err)
 	}
+}
+
+func executeIndexTemplate(out io.Writer) {
+	var t string = `
+<!DOCTYPE html>
+<html>
+<head>
+  <title>htmlcatg</title>
+</head>
+<body>
+
+<section>
+  <pre id="logs"></pre>
+</section>
+
+<script>
+var logs = document.getElementById('logs');
+var es = new EventSource('/stream');
+es.onmessage = function(ev) {
+    console.log(ev);
+
+    var html = ev.data;
+
+    var log = document.createElement('div');
+    log.innerHTML =  html + "\n";
+
+    while (log.firstChild) {
+        logs.appendChild( log.firstChild );
+    }
+};
+</script>
+</body>
+</html>
+`
+	var indexTemplate = template.Must(template.New("index").Parse(t))
+	indexTemplate.Execute(out, nil)
 }
