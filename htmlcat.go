@@ -44,7 +44,7 @@ func NewBroadcaster(stream *bufio.Reader) *Broadcaster {
 	}()
 
 	go func() {
-		clients := [](* Client){}
+		clients := [](*Client){}
 		for {
 			select {
 			case line := <-out:
@@ -139,15 +139,15 @@ func handleStream(res http.ResponseWriter, req *http.Request, broadcaster *Broad
 
 func emptyPort() int {
 	port, err := strconv.Atoi(os.Getenv("HTTPCAT_PORT"))
-	if ( err != nil ) {
+	if err != nil {
 		port = rand.Intn(1000) + 45192
 	}
 
 	for ; port < 60000; port += 1 {
-		addr, err := net.ResolveTCPAddr( "tcp4", fmt.Sprintf("localhost:%d", port) )
-		listener, err := net.ListenTCP("tcp4", addr) 
+		addr, err := net.ResolveTCPAddr("tcp4", fmt.Sprintf("localhost:%d", port))
+		listener, err := net.ListenTCP("tcp4", addr)
 		listener.Close()
-		if ( err == nil ) {
+		if err == nil {
 			return port
 		}
 	}
@@ -172,19 +172,19 @@ func main() {
 		executeIndexTemplate(res)
 	})
 
-	if (len(*exec) == 0) {
+	if len(*exec) == 0 {
 		log.Printf("%s: http://%s:%d\n", os.Args[0], *host, *port)
 	} else {
 		go func() {
 			cmd := osexec.Command(*exec, fmt.Sprintf("http://%s:%d", *host, *port))
 			err := cmd.Run()
-			if (err != nil) {
+			if err != nil {
 				log.Fatal(err)
 			}
 		}()
 	}
 	err := http.ListenAndServe(fmt.Sprintf(":%d", *port), nil)
-	if ( err != nil ) {
+	if err != nil {
 		log.Fatal(err)
 	}
 }
