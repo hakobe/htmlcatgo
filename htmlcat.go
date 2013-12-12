@@ -194,7 +194,7 @@ func executeIndexTemplate(out io.Writer) {
 <!DOCTYPE html>
 <html>
 <head>
-  <title>htmlcatg</title>
+  <title>htmlcatgo</title>
 </head>
 <body>
 
@@ -206,7 +206,9 @@ func executeIndexTemplate(out io.Writer) {
 var logs = document.getElementById('logs');
 var es = new EventSource('/stream');
 es.onmessage = function(ev) {
-    console.log(ev);
+    if (window.scrollY + document.documentElement.clientHeight >= document.documentElement.scrollHeight) {
+        var scrollToBottom = true;
+    }
 
     var html = ev.data;
 
@@ -215,6 +217,11 @@ es.onmessage = function(ev) {
 
     while (log.firstChild) {
         logs.appendChild( log.firstChild );
+    }
+
+    document.title = html.replace(/<.*?>/g, '') + ' - htmlcatgo';
+    if (scrollToBottom) {
+        window.scrollTo(0, document.body.scrollHeight);
     }
 };
 </script>
