@@ -21,13 +21,13 @@ type Client struct {
 type Broadcaster struct {
 	addClient    chan (*Client)
 	removeClient chan (*Client)
-	sem          chan bool
+	running      chan bool
 }
 
 func NewBroadcaster(stream *bufio.Reader) *Broadcaster {
-	sem := make(chan bool, 1)
-	sem <- true
-	broadcaster := &Broadcaster{make(chan (*Client)), make(chan (*Client)), sem}
+	running := make(chan bool, 1)
+	running <- true
+	broadcaster := &Broadcaster{make(chan (*Client)), make(chan (*Client)), running}
 
 	out := make(chan string)
 	quit := make(chan bool)
@@ -52,15 +52,15 @@ func NewBroadcaster(stream *bufio.Reader) *Broadcaster {
 					client.out <- line
 				}
 			case <-quit:
-				<-broadcaster.sem
+				<-broadcaster.running
 				for _, client := range clients {
 					client.quit <- true
 				}
-				close(broadcaster.sem)
+				close(broadcaster.running)
 				return
 			case c := <-broadcaster.addClient:
 				clients = append(clients, c)
-				broadcaster.sem <- true
+				broadcaster.running <- true
 			case c := <-broadcaster.removeClient:
 				newClients := make([](*Client), 0, len(clients))
 				for _, ch := range clients {
@@ -69,7 +69,7 @@ func NewBroadcaster(stream *bufio.Reader) *Broadcaster {
 					}
 				}
 				clients = newClients
-				broadcaster.sem <- true
+				broadcaster.running <- true
 			}
 		}
 	}()
@@ -78,7 +78,7 @@ func NewBroadcaster(stream *bufio.Reader) *Broadcaster {
 }
 
 func (broadcaster *Broadcaster) AddClient(client *Client) bool {
-	_, ok := <-broadcaster.sem
+	_, ok := <-broadcaster.running
 	if !ok {
 		return false
 	}
@@ -89,7 +89,7 @@ func (broadcaster *Broadcaster) AddClient(client *Client) bool {
 }
 
 func (broadcaster *Broadcaster) RemoveClient(client *Client) bool {
-	_, ok := <-broadcaster.sem
+	_, ok := <-broadcaster.running
 	if !ok {
 		return false
 	}
